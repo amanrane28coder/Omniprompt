@@ -1,0 +1,10 @@
+.env
+*.db
+__pycache__/
+*.py[c]
+.venv/
+venv/
+node_modules/
+frontend/dist/
+frontend/.vite/
+.DS_Store
