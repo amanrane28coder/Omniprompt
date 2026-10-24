@@ -38,22 +38,74 @@ instead of crashing the run (synopsis test TC6). `runs.group_id` is the other
 extension — the synopsis run table is per-model, so an A/B run is a group of
 per-model runs.
 
-## Quick start
+## Prerequisites (all platforms)
+
+- Python 3.10+, Node.js LTS + npm, Git
+- No OS-specific code: the backend is plain FastAPI/SQLAlchemy, the frontend
+  is plain Vite/React. Only the shell commands below differ by platform.
+
+## Quick start — Mac / Linux
 
 ```bash
+git clone https://github.com/amanrane28coder/Omniprompt.git
+cd Omniprompt
+
 # Backend (SQLite by default; set DATABASE_URL for PostgreSQL)
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 
-# Frontend
+# Frontend, in a second terminal
 cd ../frontend
 npm install
 npm run dev   # http://localhost:5173, talks to http://localhost:8000
 ```
 
-Or with Docker (PostgreSQL + backend; frontend still runs via npm):
+## Quick start — Windows
+
+Same repo, same ports, different shell commands. Use `python`, not
+`python3`, and the `Scripts` activation path (backslashes, not `bin/`).
+
+```cmd
+git clone https://github.com/amanrane28coder/Omniprompt.git
+cd Omniprompt
+
+REM Backend, in one terminal
+cd backend
+py -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000
+
+REM Frontend, in a second terminal
+cd ..\frontend
+npm install
+npm run dev
+```
+
+Windows notes:
+
+- PowerShell: use `.venv\Scripts\Activate.ps1`. If PowerShell blocks it
+  ("running scripts is disabled"), run once, as the same user:
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+  then activate again. Or use `cmd` and `.venv\Scripts\activate.bat` instead.
+- Command Prompt: use `.venv\Scripts\activate.bat`.
+- If `py` is not found, use `python` instead — both mean the Python
+  installed from python.org. The Microsoft Store stub for `python3` does
+  not count; install real Python 3.10+ and tick "Add python.exe to PATH".
+- Backend health check is the same on every platform:
+  `http://127.0.0.1:8000/health` must return `{"status":"ok"}`.
+  The frontend calls `http://localhost:8000` by default; CORS allows
+  `localhost` and `127.0.0.1` on any local port, so dev (5173) and
+  preview (4173) both work.
+- Production build, any platform: `cd frontend && npm run build`,
+  then `npm run preview` (port 4173 by default). A build alone does not
+  start a server — the backend must still be running separately.
+
+Or with Docker (PostgreSQL + backend; frontend still runs via npm).
+Docker Desktop is required on Windows and Mac:
 
 ```bash
 docker compose up --build
@@ -80,6 +132,9 @@ the default for demos and tests.
 cd backend
 pytest -q
 ```
+
+On Windows, activate the venv first (`.venv\Scripts\activate`), then
+`python -m pytest -q` from `backend/`.
 
 Tests cover the synopsis test cases that do not need live provider keys:
 template rendering and variable validation (TC1/TC4), version immutability /
