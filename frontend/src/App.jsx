@@ -19,8 +19,8 @@ export default function App() {
   const [workspace, setWorkspace] = useState(null);
   // Library data is kept in background state only — it is fetched
   // and refreshed on every save, but never rendered as a list.
-  // Nothing is deleted: a future UI can show it again by rendering
-  // `prompts` and `selectPrompt` as before.
+  // Nothing is deleted: the A/B sandbox instead auto-selects the
+  // latest saved prompt (on load and after every save).
   const [prompts, setPrompts] = useState([]);
   const [savedMessage, setSavedMessage] = useState("");
   const [versions, setVersions] = useState([]);
@@ -44,7 +44,11 @@ export default function App() {
     let list = await api("/workspaces");
     if (!list.length) list = [await api("/workspaces", { method: "POST", body: JSON.stringify({ name: "Default" }) })];
     setWorkspace(list[0]);
-    setPrompts(await api(`/workspaces/${list[0].id}/prompts`));
+    const promptsList = await api(`/workspaces/${list[0].id}/prompts`);
+    setPrompts(promptsList);
+    // No Library list to pick from, so the sandbox opens on the
+    // latest saved prompt in the background instead.
+    if (promptsList.length) await selectPrompt(promptsList[promptsList.length - 1]);
   }
 
   useEffect(() => { loadWorkspace().catch((e) => setError(e.message)); }, []);
@@ -62,10 +66,11 @@ export default function App() {
     const safeTitle = title.trim() || template.trim().split("\n")[0].slice(0, 60) || "Untitled prompt";
     setSaving(true);
     try {
-      await api(`/workspaces/${workspace.id}/prompts`, {
+      const created = await api(`/workspaces/${workspace.id}/prompts`, {
         method: "POST", body: JSON.stringify({ title: safeTitle, template_text: template }),
       });
       setPrompts(await api(`/workspaces/${workspace.id}/prompts`));
+      await selectPrompt(created);
       setSavedMessage("Saved to library (kept in background).");
     } catch (e) { setError(e.message); }
     setSaving(false);
@@ -104,10 +109,11 @@ export default function App() {
     const safeTitle = title.trim() || structured.objective.slice(0, 60) || "Untitled prompt";
     setSaving(true);
     try {
-      await api(`/workspaces/${workspace.id}/prompts`, {
+      const created = await api(`/workspaces/${workspace.id}/prompts`, {
         method: "POST", body: JSON.stringify({ title: safeTitle, template_text: structured.template_text }),
       });
       setPrompts(await api(`/workspaces/${workspace.id}/prompts`));
+      await selectPrompt(created);
       setTemplate(structured.template_text);
       setSavedMessage("Saved to library (kept in background).");
     } catch (e) { setError(e.message); }
@@ -198,6 +204,7 @@ export default function App() {
       {currentVersion && (
         <section className="space-y-2">
           <h2 className="text-xl font-semibold">A/B sandbox</h2>
+          <p className="text-sm text-gray-600">Latest saved prompt: {selected?.title || "(untitled)"} (v{currentVersion.version_no})</p>
           {variablesOf(currentVersion.template_text).map((name) => (
             <input key={name} className="border p-2 w-full" placeholder={name}
               onChange={(e) => setValues((v) => ({ ...v, [name]: e.target.value }))} />
