@@ -66,6 +66,8 @@ def create_prompt(workspace_id: int, payload: PromptCreate, db: Session = Depend
 
 @router.get("/workspaces/{workspace_id}/prompts")
 def list_prompts(workspace_id: int, db: Session = Depends(get_db)):
+    if not db.query(Workspace).filter_by(id=workspace_id).first():
+        raise HTTPException(404, "Workspace not found")
     return [{"id": p.id, "title": p.title} for p in db.query(Prompt).filter_by(workspace_id=workspace_id).all()]
 
 
@@ -79,6 +81,8 @@ def create_version(prompt_id: int, payload: VersionCreate, db: Session = Depends
 
 @router.get("/prompts/{prompt_id}/versions")
 def list_versions(prompt_id: int, db: Session = Depends(get_db)):
+    if not db.query(Prompt).filter_by(id=prompt_id).first():
+        raise HTTPException(404, "Prompt not found")
     versions = db.query(PromptVersion).filter_by(prompt_id=prompt_id).order_by(PromptVersion.version_no).all()
     return [{"id": v.id, "version_no": v.version_no, "parent_version_id": v.parent_version_id,
              "template_text": v.template_text, "variables_schema": v.variables_schema} for v in versions]

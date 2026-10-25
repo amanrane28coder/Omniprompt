@@ -45,3 +45,10 @@ def test_full_vertical_slice():
     assert final[0]["template_text"] == "Summarize for {{audience}}: {{article}}"  # v1 unchanged
     analytics = client.get(f"/run-groups/{run['group_id']}/analytics").json()
     assert "mock" in analytics
+
+
+def test_list_endpoints_404_on_missing_parent():
+    # Listing for a parent that does not exist is a 404, not an
+    # empty list — consistent with the create endpoints.
+    assert client.get("/workspaces/999999/prompts").status_code == 404
+    assert client.get("/prompts/999999/versions").status_code == 404

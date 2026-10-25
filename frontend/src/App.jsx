@@ -58,9 +58,14 @@ export default function App() {
     setVersions(await api(`/prompts/${prompt.id}/versions`));
     setGroup(null);
     setAnalytics(null);
+    // A new prompt gets fresh sandbox inputs — values typed for the
+    // previous prompt must not leak into this one's run.
+    setValues({});
+    setTestInput("");
   }
 
   async function createPrompt() {
+    if (!workspace) { setError("Workspace not loaded yet — is the backend running?"); return; }
     // An empty title used to create an invisible Library button, so
     // users clicked Save repeatedly thinking nothing was created.
     const safeTitle = title.trim() || template.trim().split("\n")[0].slice(0, 60) || "Untitled prompt";
@@ -106,6 +111,7 @@ export default function App() {
 
   async function saveStructured() {
     if (!structured) return;
+    if (!workspace) { setError("Workspace not loaded yet — is the backend running?"); return; }
     const safeTitle = title.trim() || structured.objective.slice(0, 60) || "Untitled prompt";
     setSaving(true);
     try {
@@ -176,7 +182,7 @@ export default function App() {
             )}
             {structured.gaps?.length > 0 && <p className="text-sm text-gray-600">Gaps (not invented): {structured.gaps.join(", ")}</p>}
             <pre className="bg-gray-100 p-4 text-sm whitespace-pre-wrap">{structured.template_text}</pre>
-            <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={saving} onClick={saveStructured}>
+            <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={!workspace || saving} onClick={saveStructured}>
               {saving ? "Saving…" : "Save this structured prompt to Library"}
             </button>
           </div>
@@ -196,7 +202,7 @@ export default function App() {
         <h2 className="text-xl font-semibold">Prompt editor</h2>
         <input className="border p-2 w-full" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
         <textarea className="border p-2 w-full h-28" value={template} onChange={(e) => setTemplate(e.target.value)} />
-        <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={saving} onClick={createPrompt}>
+        <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={!workspace || saving} onClick={createPrompt}>
           {saving ? "Saving…" : "Save as new prompt (v1)"}
         </button>
       </section>

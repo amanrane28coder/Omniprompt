@@ -1,11 +1,12 @@
 """LLM-based structuring: let the model analyze the raw request.
 
-Rule-based structuring (prompt_engine.structure) is deterministic and
-works offline, but it can only assign a role/context/constraint it
-has a keyword for. A random user request — "give example of
-environment pollution" with no keyword in the list — fell through
-to "helpful assistant", and the model then answered generically,
-because that is literally the role it was given.
+There is no rule-based structurer anymore — it was removed when
+structuring went AI-only, because a keyword list could only assign
+a role/context/constraint it had a keyword for. A random user
+request — "give example of environment pollution" with no keyword
+in the list — fell through to "helpful assistant", and the model
+then answered generically, because that is literally the role it
+was given.
 
 So, when a provider key is available, the model itself analyzes the
 request first. gpt-oss-20b (NVIDIA, free) is the structuring model
