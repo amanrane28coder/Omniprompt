@@ -27,6 +27,13 @@ export default function App() {
   const [group, setGroup] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [error, setError] = useState("");
+  const [raw, setRaw] = useState("");
+  const [structured, setStructured] = useState(null);
+  const [engineGroup, setEngineGroup] = useState(null);
+  const [engineModel, setEngineModel] = useState("openai/gpt-oss-20b");
+  const [engineTestInput, setEngineTestInput] = useState("");
+  const [engineBusy, setEngineBusy] = useState("");
+  const [saving, setSaving] = useState(false);
 
   async function loadWorkspace() {
     let list = await api("/workspaces");
@@ -45,12 +52,57 @@ export default function App() {
   }
 
   async function createPrompt() {
+    // An empty title used to create an invisible Library button, so
+    // users clicked Save repeatedly thinking nothing was created.
+    const safeTitle = title.trim() || template.trim().split("\n")[0].slice(0, 60) || "Untitled prompt";
+    setSaving(true);
     try {
       await api(`/workspaces/${workspace.id}/prompts`, {
-        method: "POST", body: JSON.stringify({ title, template_text: template }),
+        method: "POST", body: JSON.stringify({ title: safeTitle, template_text: template }),
       });
       setPrompts(await api(`/workspaces/${workspace.id}/prompts`));
     } catch (e) { setError(e.message); }
+    setSaving(false);
+  }
+
+  async function structurePrompt() {
+    setError("");
+    setEngineBusy("structuring");
+    try {
+      setStructured(await api("/prompt-engine/structure", {
+        method: "POST", body: JSON.stringify({ raw }),
+      }));
+      setEngineGroup(null);
+    } catch (e) { setError(e.message); }
+    setEngineBusy("");
+  }
+
+  async function runEngine() {
+    setError("");
+    setEngineBusy("running");
+    try {
+      const res = await api("/prompt-engine/run", {
+        method: "POST",
+        body: JSON.stringify({ raw, models: [engineModel], test_input: engineTestInput }),
+      });
+      setStructured(res.structured);
+      setEngineGroup({ responses: res.responses });
+    } catch (e) { setError(e.message); }
+    setEngineBusy("");
+  }
+
+  async function saveStructured() {
+    if (!structured) return;
+    const safeTitle = title.trim() || structured.objective.slice(0, 60) || "Untitled prompt";
+    setSaving(true);
+    try {
+      await api(`/workspaces/${workspace.id}/prompts`, {
+        method: "POST", body: JSON.stringify({ title: safeTitle, template_text: structured.template_text }),
+      });
+      setPrompts(await api(`/workspaces/${workspace.id}/prompts`));
+      setTemplate(structured.template_text);
+    } catch (e) { setError(e.message); }
+    setSaving(false);
   }
 
   async function runTest() {
@@ -74,16 +126,59 @@ export default function App() {
       {error && <p className="text-red-600">{error}</p>}
 
       <section className="space-y-2">
+        <h2 className="text-xl font-semibold">Prompt Engine — make a prompt from a raw request</h2>
+        <p className="text-gray-600 text-sm">Type what you want, in plain words. Structure turns it into a testable prompt; Run actually runs it.</p>
+        <textarea className="border p-2 w-full h-24" placeholder="e.g. Give me a Booth's multiplier example" value={raw} onChange={(e) => setRaw(e.target.value)} />
+        <input className="border p-2 w-full" placeholder="Test input (optional)" value={engineTestInput} onChange={(e) => setEngineTestInput(e.target.value)} />
+        <div className="flex gap-2 flex-wrap items-center">
+          <select className="border p-2" value={engineModel} onChange={(e) => setEngineModel(e.target.value)}>
+            <option value="mock">mock (free, instant)</option>
+            <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (NVIDIA, free, verified)</option>
+            <option value="deepseek-ai/deepseek-v4.1-flash">deepseek-ai/deepseek-v4.1-flash (NVIDIA, slow)</option>
+            <option value="moonshotai/kimi-k3">moonshotai/kimi-k3 (NVIDIA)</option>
+            <option value="z-ai/glm-5.3">z-ai/glm-5.3 (NVIDIA, slow)</option>
+          </select>
+          <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={!raw.trim() || !!engineBusy} onClick={structurePrompt}>
+            {engineBusy === "structuring" ? "Structuring…" : "Structure it"}
+          </button>
+          <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={!raw.trim() || !!engineBusy} onClick={runEngine}>
+            {engineBusy === "running" ? "Running…" : "Run it"}
+          </button>
+        </div>
+        {structured && (
+          <div className="border p-4 space-y-2">
+            <p><b>Role:</b> {structured.role} · <b>Audience:</b> {structured.audience || "—"} · <b>Format:</b> {structured.format_requirements || "—"}</p>
+            {structured.gaps?.length > 0 && <p className="text-sm text-gray-600">Gaps (not invented): {structured.gaps.join(", ")}</p>}
+            <pre className="bg-gray-100 p-4 text-sm whitespace-pre-wrap">{structured.template_text}</pre>
+            <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={saving} onClick={saveStructured}>
+              {saving ? "Saving…" : "Save this structured prompt to Library"}
+            </button>
+          </div>
+        )}
+        {engineGroup && engineGroup.responses.map((r, i) => (
+          <article key={i} className="border p-4">
+            <h3 className="font-semibold">{r.model}</h3>
+            <p>{r.error || r.output_text}</p>
+            <p className="text-sm text-gray-600">
+              Score: {r.scores?.weighted_score ?? "—"} · Latency: {r.latency_ms}ms · Cost: ${r.cost_usd}
+            </p>
+          </article>
+        ))}
+      </section>
+
+      <section className="space-y-2">
         <h2 className="text-xl font-semibold">Prompt editor</h2>
         <input className="border p-2 w-full" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
         <textarea className="border p-2 w-full h-28" value={template} onChange={(e) => setTemplate(e.target.value)} />
-        <button className="bg-black text-white px-4 py-2" onClick={createPrompt}>Save as new prompt (v1)</button>
+        <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={saving} onClick={createPrompt}>
+          {saving ? "Saving…" : "Save as new prompt (v1)"}
+        </button>
       </section>
 
       <section className="space-y-2">
         <h2 className="text-xl font-semibold">Library</h2>
         {prompts.map((p) => (
-          <button key={p.id} className="block underline" onClick={() => selectPrompt(p)}>{p.title}</button>
+          <button key={p.id} className="block underline" onClick={() => selectPrompt(p)}>{p.title || "(untitled)"}</button>
         ))}
         {selected && <p>Versions: {versions.map((v) => `v${v.version_no}`).join(", ")} — latest: {currentVersion?.template_text}</p>}
       </section>
