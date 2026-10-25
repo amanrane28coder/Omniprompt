@@ -115,6 +115,37 @@ Copy `.env.example` to `.env` and fill in provider keys. Keys are read
 server-side only. Never commit `.env`. The `mock` provider needs no key and is
 the default for demos and tests.
 
+## Prompt Engine (the working core)
+
+`backend/app/services/prompt_engine.py` — raw request → structured
+template → parallel provider run → weighted score + latency + cost +
+format check, in one call. Structuring is rule-based and deterministic:
+it works offline at $0 and never needs a provider key. Real providers
+enter only at the run step, with keys supplied server-side (BYOK).
+
+```bash
+# Structure only
+curl -X POST http://127.0.0.1:8000/prompt-engine/structure \
+  -H 'Content-Type: application/json' \
+  -d '{"raw": "Explain cloud computing to a beginner in five numbered points."}'
+
+# Structure + run with the mock provider (no key needed)
+curl -X POST http://127.0.0.1:8000/prompt-engine/run \
+  -H 'Content-Type: application/json' \
+  -d '{"raw": "Explain cloud computing to a beginner in five numbered points.", "models": ["mock"], "test_input": "cloud computing"}'
+```
+
+What it extracts: role (explicit "Act as X" wins, otherwise inferred),
+audience, word limit, numbered-point count, practical-example /
+evidence / step-by-step constraints. What it does not invent: if the
+raw request gives no audience or format, those are reported in
+`gaps` instead of being hallucinated. The format check counts
+numbered points and words mechanically — a mock response that is not
+numbered honestly fails the format check instead of faking a pass.
+
+These endpoints are stateless. For versioned prompts, run history,
+and audit events, use `/prompts` and `/runs` instead.
+
 ## API at a glance
 
 - `GET /health`
@@ -122,6 +153,8 @@ the default for demos and tests.
 - `POST /workspaces/{id}/prompts`, `GET /workspaces/{id}/prompts`
 - `POST /prompts/{id}/versions`, `GET /prompts/{id}/versions`
 - `POST /versions/{id}/branch`, `POST /versions/{id}/rollback` (rollback = a new version copying the old one, never an edit)
+- `POST /prompt-engine/structure` — `{raw}` → structured prompt + gaps
+- `POST /prompt-engine/run` — `{raw, models, variables, test_input}` → structured prompt + per-model responses, scores, format check
 - `POST /runs` — body: `{version_id, models, variables, test_input, temperature, top_p, seed}`. Missing variables are rejected before any provider call (TC4).
 - `GET /run-groups/{group_id}` — side-by-side responses with scores
 - `GET /run-groups/{group_id}/analytics` — mean score, latency, cost per model
