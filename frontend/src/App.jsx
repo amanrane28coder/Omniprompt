@@ -34,6 +34,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [raw, setRaw] = useState("");
   const [structured, setStructured] = useState(null);
+  // The raw text the current structured result was judged from.
+  // Run reuses it (no second structuring call) only while this
+  // still equals raw; editing raw invalidates it.
+  const [structuredForRaw, setStructuredForRaw] = useState("");
   const [engineGroup, setEngineGroup] = useState(null);
   const [engineModel, setEngineModel] = useState("openai/gpt-oss-20b");
   const [engineTestInput, setEngineTestInput] = useState("");
@@ -86,11 +90,14 @@ export default function App() {
     setSavedMessage("");
     setEngineBusy("structuring");
     try {
+      const body = { raw };
+      if (engineModel.startsWith("groq/")) body.structuring_model = engineModel;
       setStructured(await api("/prompt-engine/structure", {
-        method: "POST", body: JSON.stringify({ raw }),
+        method: "POST", body: JSON.stringify(body),
       }));
+      setStructuredForRaw(raw);
       setEngineGroup(null);
-    } catch (e) { setError(e.message); setStructured(null); setEngineGroup(null); }
+    } catch (e) { setError(e.message); setStructured(null); setStructuredForRaw(""); setEngineGroup(null); }
     setEngineBusy("");
   }
 
@@ -99,13 +106,25 @@ export default function App() {
     setSavedMessage("");
     setEngineBusy("running");
     try {
-      const res = await api("/prompt-engine/run", {
-        method: "POST",
-        body: JSON.stringify({ raw, models: [engineModel], test_input: engineTestInput }),
-      });
+      let res;
+      if (structured && structuredForRaw === raw) {
+        // Viva fast path: reuse the structured result instead of
+        // paying for a second structuring call.
+        res = await api("/prompt-engine/run-structured", {
+          method: "POST",
+          body: JSON.stringify({ structured, models: [engineModel], test_input: engineTestInput }),
+        });
+      } else {
+        const body = { raw, models: [engineModel], test_input: engineTestInput };
+        if (engineModel.startsWith("groq/")) body.structuring_model = engineModel;
+        res = await api("/prompt-engine/run", {
+          method: "POST", body: JSON.stringify(body),
+        });
+      }
       setStructured(res.structured);
+      setStructuredForRaw(raw);
       setEngineGroup({ responses: res.responses });
-    } catch (e) { setError(e.message); setStructured(null); setEngineGroup(null); }
+    } catch (e) { setError(e.message); setStructured(null); setStructuredForRaw(""); setEngineGroup(null); }
     setEngineBusy("");
   }
 
@@ -152,11 +171,13 @@ export default function App() {
         <p className="text-gray-600 text-sm">Type what you want, in plain words. Structure turns it into a testable prompt; Run actually runs it.</p>
         <textarea className="border p-2 w-full h-24" placeholder="e.g. Give me a Booth's multiplier example" value={raw} onChange={(e) => setRaw(e.target.value)} />
         <input className="border p-2 w-full" placeholder="Test input (optional)" value={engineTestInput} onChange={(e) => setEngineTestInput(e.target.value)} />
-        <p className="text-sm text-gray-600">Structured live by AI (gpt-oss-20b) — no hardcoded rules. If the model can't judge it, you get an error, not a keyword result.</p>
+        <p className="text-sm text-gray-600">Structured live by AI — no hardcoded rules. If the model can't judge it, you get an error, not a keyword result. Groq models structure and answer via Groq (needs GROQ_API_KEY); otherwise NVIDIA gpt-oss-20b.</p>
         <div className="flex gap-2 flex-wrap items-center">
           <select className="border p-2" value={engineModel} onChange={(e) => setEngineModel(e.target.value)}>
             <option value="mock">mock (free, instant)</option>
             <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (NVIDIA, free, verified live)</option>
+            <option value="groq/gpt-oss-20b">groq/gpt-oss-20b (Groq, fast — needs GROQ_API_KEY)</option>
+            <option value="groq/gpt-oss-120b">groq/gpt-oss-120b (Groq, fast — needs GROQ_API_KEY)</option>
           </select>
           <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={!raw.trim() || !!engineBusy} onClick={structurePrompt}>
             {engineBusy === "structuring" ? "Structuring…" : "Structure it"}
@@ -192,7 +213,7 @@ export default function App() {
             <h3 className="font-semibold">{r.model}</h3>
             <pre className="whitespace-pre-wrap break-words text-sm">{r.error || r.output_text}</pre>
             <p className="text-sm text-gray-600">
-              Score: {r.scores?.weighted_score ?? "—"} · Latency: {r.latency_ms}ms · Cost: ${r.cost_usd}
+              Score: {r.weighted_score ?? "—"} · Latency: {r.latency_ms}ms · Cost: ${r.cost_usd}
             </p>
           </article>
         ))}

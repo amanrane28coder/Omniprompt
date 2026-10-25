@@ -123,14 +123,19 @@ async def llm_structure_with_error(raw: str, model: str = DEFAULT_STRUCTURING_MO
     strict AI path surfaces instead of silently falling back to
     hardcoded rules."""
     if adapter is None:
-        # Only NVIDIA models are used for structuring: the mock
-        # adapter cannot return JSON, and other providers are not
-        # the free structuring model the user chose.
-        from .orchestration import NVIDIA_MODELS
+        # Structuring models: NVIDIA (default) and Groq (fast path).
+        # The mock adapter cannot return JSON, and other providers
+        # are not the free structuring models the user chose.
+        from .orchestration import GROQ_MODELS, NVIDIA_MODELS
 
-        if model not in NVIDIA_MODELS:
+        if model in NVIDIA_MODELS:
+            adapter = NvidiaAdapter(model)
+        elif model in GROQ_MODELS:
+            from ..adapters.groq_adapter import GroqAdapter
+
+            adapter = GroqAdapter(model)
+        else:
             return None, f"model {model} is not a registered structuring model"
-        adapter = NvidiaAdapter(model)
     try:
         response = await adapter.send(
             _META_PROMPT + raw, {"temperature": 0.0, "top_p": 1.0}

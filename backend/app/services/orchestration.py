@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from ..adapters.base import CanonicalResponse
 from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.gemini_adapter import GeminiAdapter
+from ..adapters.groq_adapter import GroqAdapter
 from ..adapters.mock import MockAdapter
 from ..adapters.nvidia_adapter import NvidiaAdapter
 from ..adapters.openai_adapter import OpenAIAdapter
@@ -47,14 +48,28 @@ PRICES = {
     "claude-sonnet-4-5": (3.00, 15.00),
 }
 
+# Groq fast path (added Oct 25, 2026 for viva demo speed): Groq's
+# inference is typically an order of magnitude quicker than NVIDIA's
+# free tier, which is what can bring a real run under ~10s. Display
+# names carry a "groq/" prefix so they never collide with the
+# NVIDIA slugs for the same models; GroqAdapter maps them to the
+# real API slugs.
+GROQ_MODELS = [
+    "groq/gpt-oss-20b",
+    "groq/gpt-oss-120b",
+    "groq/llama-3.3-70b-versatile",
+]
+
 _ADAPTERS = {
     "mock": MockAdapter(),
     "gpt-4o-mini": OpenAIAdapter(),
     "gemini-2.5-flash": GeminiAdapter(),
     "claude-sonnet-4-5": ClaudeAdapter(),
     **{model: NvidiaAdapter(model) for model in NVIDIA_MODELS},
+    **{model: GroqAdapter(model) for model in GROQ_MODELS},
 }
 PRICES.update({model: (0.0, 0.0) for model in NVIDIA_MODELS})
+PRICES.update({model: (0.0, 0.0) for model in GROQ_MODELS})
 _SEMAPHORES = {name: asyncio.Semaphore(5) for name in _ADAPTERS}
 
 

@@ -123,11 +123,12 @@ def _build_template(role: str, objective: str, context: str, constraints: list[s
     return " ".join(s for s in sentences if s)
 
 
-async def structure_with_ai_strict(raw: str) -> tuple[StructuredPrompt, str]:
+async def structure_with_ai_strict(raw: str, model: str | None = None) -> tuple[StructuredPrompt, str]:
     """Structure with AI only — no hardcoded structurer exists
     anymore to fall back to.
 
-    The model (gpt-oss-20b, DEFAULT_STRUCTURING_MODEL) judges the
+    The model (default gpt-oss-20b, DEFAULT_STRUCTURING_MODEL, or a
+    Groq model when the caller passes one for speed) judges the
     request and assigns role, context, constraints, format, and
     intent. If it cannot judge the request, this raises
     RuntimeError with the model error instead of returning any
@@ -135,13 +136,14 @@ async def structure_with_ai_strict(raw: str) -> tuple[StructuredPrompt, str]:
     """
     from .llm_structuring import DEFAULT_STRUCTURING_MODEL, llm_structure_with_error
 
+    structuring_model = model or DEFAULT_STRUCTURING_MODEL
     cleaned = clean_text(raw)
     if not cleaned:
         raise ValueError("Raw request is empty")
-    llm, error = await llm_structure_with_error(cleaned, model=DEFAULT_STRUCTURING_MODEL)
+    llm, error = await llm_structure_with_error(cleaned, model=structuring_model)
     if llm is None:
         raise RuntimeError(
-            f"AI structuring unavailable — {DEFAULT_STRUCTURING_MODEL}: {error}. "
+            f"AI structuring unavailable — {structuring_model}: {error}. "
             "No other model on this NVIDIA key answers structuring calls: "
             "gpt-oss-120b and kimi-k3 return 410 Gone, glm/deepseek time out "
             "at 120s (verified Oct 25, 2026)."
@@ -164,7 +166,7 @@ async def structure_with_ai_strict(raw: str) -> tuple[StructuredPrompt, str]:
         variables=extract_variables(cleaned),
         gaps=llm["gaps"],
         template_text=template_text,
-    ), f"llm:{DEFAULT_STRUCTURING_MODEL}"
+    ), f"llm:{structuring_model}"
 
 
 def format_check(output_text: str, structured: StructuredPrompt) -> dict:
@@ -205,30 +207,32 @@ def format_check(output_text: str, structured: StructuredPrompt) -> dict:
     return result
 
 
-async def run_engine(
-    raw: str,
+async def _run_with_structured(
+    structured: StructuredPrompt,
+    source: str,
     models: list[str] | None = None,
     variables: dict | None = None,
     test_input: str = "",
     temperature: float = 0.2,
     top_p: float = 1.0,
     seed: int | None = None,
+    max_tokens: int = 1024,
 ) -> dict:
-    """Structure a raw request with AI, run it, and score every response.
+    """Run an already-structured prompt and score every response.
 
-    Stateless: this does not write to the database. Use the /prompts
-    and /runs endpoints when a version, run history, or audit trail
-    is wanted. The mock provider needs no key; real providers need
-    their key set server-side, and a missing key is recorded as a
-    per-model error, not a crash. Structuring itself is AI-only:
-    if the structuring model cannot judge the request, this raises
-    instead of running on a hardcoded template.
+    max_tokens caps answer length (default 1024): a long answer is
+    the slowest part of a real run, and a viva demo does not need
+    a multi-thousand-token essay to show the flow. The cap is
+    1024, not 300, because gpt-oss spends tokens on internal
+    reasoning that counts toward max_tokens — a 300 cap produced
+    an empty answer on a live run (Oct 25, 2026) when reasoning
+    exhausted the budget before the answer. Structuring calls are
+    never capped — a truncated structuring JSON would fail parsing.
     """
-    structured, source = await structure_with_ai_strict(raw)
     prompt_text = render_template(structured.template_text, variables or {})
     if test_input:
         prompt_text = f"{prompt_text}\n\nInput:\n{test_input}"
-    params = {"temperature": temperature, "top_p": top_p, "seed": seed}
+    params = {"temperature": temperature, "top_p": top_p, "seed": seed, "max_tokens": max_tokens}
     results = await orchestrate_run(prompt_text, models or ["mock"], params)
     responses = []
     for result in results:
@@ -269,3 +273,74 @@ async def run_engine(
         "prompt_text": prompt_text,
         "responses": responses,
     }
+
+
+async def run_engine(
+    raw: str,
+    models: list[str] | None = None,
+    variables: dict | None = None,
+    test_input: str = "",
+    temperature: float = 0.2,
+    top_p: float = 1.0,
+    seed: int | None = None,
+    structuring_model: str | None = None,
+    max_tokens: int = 1024,
+) -> dict:
+    """Structure a raw request with AI, run it, and score every response.
+
+    Stateless: this does not write to the database. Use the /prompts
+    and /runs endpoints when a version, run history, or audit trail
+    is wanted. The mock provider needs no key; real providers need
+    their key set server-side, and a missing key is recorded as a
+    per-model error, not a crash. Structuring itself is AI-only:
+    if the structuring model cannot judge the request, this raises
+    instead of running on a hardcoded template.
+    """
+    structured, source = await structure_with_ai_strict(raw, model=structuring_model)
+    return await _run_with_structured(
+        structured, source, models, variables, test_input,
+        temperature, top_p, seed, max_tokens,
+    )
+
+
+async def run_structured(
+    structured_dict: dict,
+    models: list[str] | None = None,
+    variables: dict | None = None,
+    test_input: str = "",
+    temperature: float = 0.2,
+    top_p: float = 1.0,
+    seed: int | None = None,
+    max_tokens: int = 1024,
+) -> dict:
+    """Run a prompt that is already structured — no structuring call.
+
+    This is the viva fast path: the frontend calls /structure once,
+    shows the structured prompt, and then Run reuses that result
+    instead of paying for a second structuring call. The caller
+    must only pass a structured dict it just got from /structure
+    for the same raw text; if the raw text changed, call run_engine
+    instead so the template is re-judged.
+    """
+    if not (structured_dict or {}).get("template_text"):
+        raise ValueError("Structured prompt template_text is empty")
+    structured = StructuredPrompt(
+        raw="",
+        intent=structured_dict.get("intent") or "general",
+        role=structured_dict.get("role") or "",
+        objective=structured_dict.get("objective") or "",
+        context=structured_dict.get("context") or "",
+        constraints=structured_dict.get("constraints") or [],
+        format_requirements=structured_dict.get("format_requirements") or "",
+        format_count=structured_dict.get("format_count"),
+        audience=structured_dict.get("audience"),
+        word_limit=structured_dict.get("word_limit"),
+        variables=structured_dict.get("variables") or {},
+        gaps=structured_dict.get("gaps") or [],
+        template_text=structured_dict["template_text"],
+    )
+    source = structured_dict.get("source") or "llm:openai/gpt-oss-20b"
+    return await _run_with_structured(
+        structured, source, models, variables, test_input,
+        temperature, top_p, seed, max_tokens,
+    )

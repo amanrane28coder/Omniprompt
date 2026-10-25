@@ -38,6 +38,7 @@ class NvidiaAdapter(BaseAdapter):
                     "messages": [{"role": "user", "content": prompt_text}],
                     "temperature": params.get("temperature", 0.2),
                     "top_p": params.get("top_p", 1.0),
+                    **({"max_tokens": params["max_tokens"]} if params.get("max_tokens") is not None else {}),
                 },
             )
             resp.raise_for_status()
