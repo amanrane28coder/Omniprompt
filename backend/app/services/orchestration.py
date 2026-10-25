@@ -12,8 +12,20 @@ from ..adapters.base import CanonicalResponse
 from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.mock import MockAdapter
+from ..adapters.nvidia_adapter import NvidiaAdapter
 from ..adapters.openai_adapter import OpenAIAdapter
 from .evaluation import estimated_cost_usd
+
+# NVIDIA Build models registered by slug. Slugs change when NVIDIA
+# updates versions — check build.nvidia.com for the current list.
+# All are $0 on the free tier (rate-limited, prototyping only).
+NVIDIA_MODELS = [
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "meta/llama-3.3-70b-instruct",
+    "deepseek-ai/deepseek-v4.1-flash",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.3",
+]
 
 # Placeholder per-1M-token rates. Replace with current provider pricing
 # before quoting real costs.
@@ -29,7 +41,9 @@ _ADAPTERS = {
     "gpt-4o-mini": OpenAIAdapter(),
     "gemini-2.5-flash": GeminiAdapter(),
     "claude-sonnet-4-5": ClaudeAdapter(),
+    **{model: NvidiaAdapter(model) for model in NVIDIA_MODELS},
 }
+PRICES.update({model: (0.0, 0.0) for model in NVIDIA_MODELS})
 _SEMAPHORES = {name: asyncio.Semaphore(5) for name in _ADAPTERS}
 
 

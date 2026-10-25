@@ -143,6 +143,25 @@ raw request gives no audience or format, those are reported in
 numbered points and words mechanically — a mock response that is not
 numbered honestly fails the format check instead of faking a pass.
 
+## NVIDIA provider (extension beyond the synopsis)
+
+The synopsis names OpenAI, Gemini, and Claude. NVIDIA Build is added
+as a fourth provider behind the same adapter interface — adding it
+touched only `backend/app/adapters/nvidia_adapter.py` plus its
+registration in `orchestration.py`.
+
+- API: OpenAI-compatible, `https://integrate.api.nvidia.com/v1/chat/completions`
+- Key: `NVIDIA_API_KEY` in `.env`, server-side only, key prefix `nvapi-`
+- Registered models: `nvidia/llama-3.3-nemotron-super-49b-v1.5`,
+  `meta/llama-3.3-70b-instruct`, `deepseek-ai/deepseek-v4.1-flash`,
+  `moonshotai/kimi-k3`, `z-ai/glm-5.3`
+- Cost: $0 on the free tier (recorded as $0.00 by the engine), but
+  rate-limited (~40 requests/minute reported) and for prototyping
+  only, not production. Model slugs change when NVIDIA updates
+  versions — check build.nvidia.com for the current list.
+- No key yet? The run still completes: a missing key is recorded
+  as a per-model error, not a crash (see the NVIDIA tests).
+
 These endpoints are stateless. For versioned prompts, run history,
 and audit events, use `/prompts` and `/runs` instead.
 
