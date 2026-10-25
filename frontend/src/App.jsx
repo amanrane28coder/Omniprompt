@@ -158,7 +158,7 @@ export default function App() {
         {engineGroup && engineGroup.responses.map((r, i) => (
           <article key={i} className="border p-4">
             <h3 className="font-semibold">{r.model}</h3>
-            <p>{r.error || r.output_text}</p>
+            <pre className="whitespace-pre-wrap break-words text-sm">{r.error || r.output_text}</pre>
             <p className="text-sm text-gray-600">
               Score: {r.scores?.weighted_score ?? "—"} · Latency: {r.latency_ms}ms · Cost: ${r.cost_usd}
             </p>
@@ -202,7 +202,7 @@ export default function App() {
             {group.responses.map((r, i) => (
               <article key={i} className="border p-4">
                 <h3 className="font-semibold">{r.model}</h3>
-                <p>{r.error || r.output_text}</p>
+                <pre className="whitespace-pre-wrap break-words text-sm">{r.error || r.output_text}</pre>
                 <p className="text-sm text-gray-600">
                   Score: {r.scores?.weighted_score} · Latency: {r.latency_ms}ms · Cost: ${r.cost_usd}
                 </p>
