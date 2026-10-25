@@ -25,6 +25,13 @@ NVIDIA_MODELS = [
     # returning 410 Gone (EOL Aug 26, 2026): meta/llama-3.3-70b-instruct,
     # nvidia/llama-3.3-nemotron-super-49b-v1.5. deepseek-v4.1-flash
     # and glm-5.3 are still listed but timed out at 120s on that day.
+    # Live test on this key, Oct 25, 2026, structuring prompt:
+    # gpt-oss-120b: 410 Gone in 2.2s; kimi-k3: 410 Gone in 1.0s;
+    # glm-5.3, deepseek-v4.1-flash, glm-5.3-flash: ReadTimeout at
+    # 120s; gpt-oss-20b: OK in 16.3s. Only 20b is used for
+    # structuring; the others stay registered for run attempts,
+    # where a failure is recorded per-model, not hidden.
+    "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     "deepseek-ai/deepseek-v4.1-flash",
     "moonshotai/kimi-k3",

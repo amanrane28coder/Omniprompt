@@ -73,7 +73,7 @@ export default function App() {
         method: "POST", body: JSON.stringify({ raw }),
       }));
       setEngineGroup(null);
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e.message); setStructured(null); setEngineGroup(null); }
     setEngineBusy("");
   }
 
@@ -87,7 +87,7 @@ export default function App() {
       });
       setStructured(res.structured);
       setEngineGroup({ responses: res.responses });
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(e.message); setStructured(null); setEngineGroup(null); }
     setEngineBusy("");
   }
 
@@ -130,13 +130,11 @@ export default function App() {
         <p className="text-gray-600 text-sm">Type what you want, in plain words. Structure turns it into a testable prompt; Run actually runs it.</p>
         <textarea className="border p-2 w-full h-24" placeholder="e.g. Give me a Booth's multiplier example" value={raw} onChange={(e) => setRaw(e.target.value)} />
         <input className="border p-2 w-full" placeholder="Test input (optional)" value={engineTestInput} onChange={(e) => setEngineTestInput(e.target.value)} />
+        <p className="text-sm text-gray-600">Structured live by AI (gpt-oss-20b) — no hardcoded rules. If the model can't judge it, you get an error, not a keyword result.</p>
         <div className="flex gap-2 flex-wrap items-center">
           <select className="border p-2" value={engineModel} onChange={(e) => setEngineModel(e.target.value)}>
             <option value="mock">mock (free, instant)</option>
-            <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (NVIDIA, free, verified)</option>
-            <option value="deepseek-ai/deepseek-v4.1-flash">deepseek-ai/deepseek-v4.1-flash (NVIDIA, slow)</option>
-            <option value="moonshotai/kimi-k3">moonshotai/kimi-k3 (NVIDIA)</option>
-            <option value="z-ai/glm-5.3">z-ai/glm-5.3 (NVIDIA, slow)</option>
+            <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (NVIDIA, free, verified live)</option>
           </select>
           <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={!raw.trim() || !!engineBusy} onClick={structurePrompt}>
             {engineBusy === "structuring" ? "Structuring…" : "Structure it"}
@@ -147,7 +145,19 @@ export default function App() {
         </div>
         {structured && (
           <div className="border p-4 space-y-2">
-            <p><b>Role:</b> {structured.role} · <b>Audience:</b> {structured.audience || "—"} · <b>Format:</b> {structured.format_requirements || "—"}</p>
+            {structured.source && <p className="text-sm text-gray-600">Assigned by: {structured.source.startsWith("llm:") ? structured.source.slice(4) + " (AI, live)" : structured.source}</p>}
+            <p><b>Role:</b> {structured.role}</p>
+            <p><b>Context:</b> {structured.context || "—"}</p>
+            <p><b>Audience:</b> {structured.audience || "—"} · <b>Output format:</b> {structured.format_requirements || "—"} · <b>Word limit:</b> {structured.word_limit || "—"}</p>
+            {structured.constraints?.length > 0 && (
+              <div>
+                <p><b>Constraints:</b></p>
+                <ul className="list-disc pl-5 text-sm">{structured.constraints.map((c, i) => <li key={i}>{c}</li>)}</ul>
+              </div>
+            )}
+            {structured.variables && Object.keys(structured.variables).length > 0 && (
+              <p className="text-sm"><b>Variables:</b> {Object.keys(structured.variables).join(", ")}</p>
+            )}
             {structured.gaps?.length > 0 && <p className="text-sm text-gray-600">Gaps (not invented): {structured.gaps.join(", ")}</p>}
             <pre className="bg-gray-100 p-4 text-sm whitespace-pre-wrap">{structured.template_text}</pre>
             <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={saving} onClick={saveStructured}>

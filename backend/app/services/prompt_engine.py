@@ -3,27 +3,22 @@
 Pipeline: raw request -> structured template -> parallel provider run ->
 weighted rubric score + latency + cost + format check.
 
-Structuring is deliberately rule-based, not LLM-based: it works offline,
-costs $0, and is deterministic, so a demo or test never depends on a
-provider key or on a model changing its mind. Real providers enter only
-at the run step, through the adapters, under the BYOK model.
+Structuring is AI-only, by design: a live model (gpt-oss-20b on
+NVIDIA, the only model on this key that actually answers structuring
+calls as of Oct 25, 2026 — gpt-oss-120b and kimi-k3 return 410 Gone,
+glm/deepseek time out at 120s) judges the request and assigns role,
+context, constraints, and output format. There is no hardcoded
+rule-based structurer in this module anymore: if the model cannot
+judge a request, structuring fails with a clear error instead of
+returning a keyword-based result. Real providers enter at the run
+step through the adapters, under the BYOK model.
 """
 import re
 from dataclasses import dataclass, field
 
 from .evaluation import deterministic_evaluate, weighted_score
 from .orchestration import cost_for, orchestrate_run
-from .structuring import clean_text, classify_intent, extract_variables, render_template
-
-_NUMBER_WORDS = {
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-}
-_NUMBER_RE = r"(\d+|" + "|".join(_NUMBER_WORDS) + r")"
-
-
-def _to_int(token: str) -> int:
-    return int(token) if token.isdigit() else _NUMBER_WORDS[token.lower()]
+from .structuring import clean_text, extract_variables, render_template
 
 
 @dataclass
@@ -43,106 +38,133 @@ class StructuredPrompt:
     template_text: str = ""
 
 
-def structure(raw: str) -> StructuredPrompt:
-    """Turn a raw, vague request into a structured, testable prompt."""
+def _as_sentence(text: str) -> str:
+    """One sentence, capitalized, ending with a period — unless it
+    already ends with '?' or '!', in which case no '.' is added
+    ('What is python programming?.' is not a sentence format)."""
+    text = text.strip()
+    if not text:
+        return ""
+    capitalized = text[0].upper() + text[1:]
+    if capitalized[-1] in "?!":
+        return capitalized
+    return capitalized.rstrip(".") + "."
+
+
+def _format_sentence(format_requirements: str) -> str:
+    """Format field as a sentence, not a label: '5 numbered points'
+    -> 'Use 5 numbered points.', 'Markdown table' -> 'Present it
+    as a Markdown table.' — the field itself stays machine-readable
+    for format_check; only the template phrasing changes."""
+    fmt = format_requirements.strip()
+    if fmt == "Markdown table":
+        return "Present it as a Markdown table."
+    if fmt == "Numbered list":
+        return "Use a numbered list."
+    if fmt == "Bullet list":
+        return "Use a bullet list."
+    if fmt == "Paragraphs":
+        return "Write it in paragraphs."
+    if fmt == "Essay":
+        return "Write it as an essay."
+    if fmt == "JSON":
+        return "Return it as JSON."
+    if fmt == "Markdown":
+        return "Write it in Markdown."
+    if re.match(r"^\d+ sentences?$", fmt):
+        return f"Write it in {fmt}."
+    return f"Use {fmt}."
+
+
+_NUMBER_WORD_DIGITS = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+}
+
+
+def _normalize_numbers(text: str) -> str:
+    lowered = text.lower()
+    for word, digit in _NUMBER_WORD_DIGITS.items():
+        lowered = re.sub(rf"\b{word}\b", digit, lowered)
+    return lowered
+
+
+def _build_template(role: str, objective: str, context: str, constraints: list[str], format_requirements: str) -> str:
+    """Sentence-format template, like the cloud computing example:
+    'Act as a computer science instructor. Explain cloud computing
+    to a beginner in five numbered points. Include one practical
+    example and finish with a two-sentence summary.' — one natural
+    paragraph, no 'Objective:' / 'Context:' / 'Output format:'
+    labels. This is the text sent to the model, so it reads like
+    a prompt a person would write, not a form."""
+    sentences = [f"Act as {role}.", _as_sentence(objective)]
+    if context:
+        sentences.append(f"In the context of {context.rstrip('.')}.")
+    objective_lower = objective.lower()
+    for constraint in constraints:
+        # "Audience: beginner." is a label, not a sentence — and it
+        # is dropped entirely when the objective already names the
+        # audience ("to a beginner"), otherwise the sentence format
+        # would repeat what the objective just said.
+        audience_match = re.match(r"^Audience:\s*(.+)\.$", constraint.strip())
+        if audience_match:
+            if audience_match.group(1).lower() not in objective_lower:
+                sentences.append(f"The audience is {audience_match.group(1)}.")
+            continue
+        # Same dedup for constraints the objective already states
+        # verbatim ("Include one practical example.").
+        if _as_sentence(constraint).lower().rstrip(".") not in objective_lower:
+            sentences.append(_as_sentence(constraint))
+    if format_requirements:
+        # "five numbered points" in the objective is the same format
+        # as "5 numbered points" — normalize words to digits first.
+        if format_requirements.lower() not in _normalize_numbers(objective):
+            sentences.append(_format_sentence(format_requirements))
+    return " ".join(s for s in sentences if s)
+
+
+async def structure_with_ai_strict(raw: str) -> tuple[StructuredPrompt, str]:
+    """Structure with AI only — no hardcoded structurer exists
+    anymore to fall back to.
+
+    The model (gpt-oss-20b, DEFAULT_STRUCTURING_MODEL) judges the
+    request and assigns role, context, constraints, format, and
+    intent. If it cannot judge the request, this raises
+    RuntimeError with the model error instead of returning any
+    keyword-based result.
+    """
+    from .llm_structuring import DEFAULT_STRUCTURING_MODEL, llm_structure_with_error
+
     cleaned = clean_text(raw)
     if not cleaned:
         raise ValueError("Raw request is empty")
-    lowered = cleaned.lower()
-
-    # Role: explicit "Act as X" wins, otherwise infer from intent.
-    # When a role is given explicitly, drop that sentence from the
-    # objective so the template does not repeat "Act as X" twice.
-    role_match = re.search(r"act as (?:a |an |the )?([^.,;]+)", lowered)
-    objective_text = cleaned
-    if role_match:
-        role = role_match.group(1).strip()
-        objective_text = re.sub(
-            r"^act as (?:a |an |the )?[^.,;]+[.,;]\s*", "", cleaned, flags=re.I
-        ).strip() or cleaned
-    elif "code" in lowered or "function" in lowered or "program" in lowered:
-        role = "senior software developer"
-    elif "summar" in lowered:
-        role = "analyst"
-    elif "explain" in lowered or "teach" in lowered:
-        role = "subject instructor"
-    elif "report" in lowered:
-        role = "research analyst"
-    else:
-        role = "helpful assistant"
-
-    # Audience: "for students", "to a beginner", "for experts", ...
-    audience = None
-    audience_match = re.search(
-        r"(?:for|to) (?:a |an |the )?((?:beginner|beginners|student|students|expert|experts|developer|developers|child|children|professional|professionals)s?)",
-        lowered,
+    llm, error = await llm_structure_with_error(cleaned, model=DEFAULT_STRUCTURING_MODEL)
+    if llm is None:
+        raise RuntimeError(
+            f"AI structuring unavailable — {DEFAULT_STRUCTURING_MODEL}: {error}. "
+            "No other model on this NVIDIA key answers structuring calls: "
+            "gpt-oss-120b and kimi-k3 return 410 Gone, glm/deepseek time out "
+            "at 120s (verified Oct 25, 2026)."
+        )
+    template_text = _build_template(
+        llm["role"], llm["objective"], llm["context"],
+        llm["constraints"], llm["format_requirements"],
     )
-    if audience_match:
-        audience = audience_match.group(1)
-
-    constraints: list[str] = []
-    if audience:
-        constraints.append(f"Audience: {audience}.")
-    if "practical example" in lowered:
-        constraints.append("Include one practical example.")
-    if "evidence" in lowered or "evidence-based" in lowered:
-        constraints.append("Support claims with evidence.")
-    if "step-by-step" in lowered or "step by step" in lowered:
-        constraints.append("Explain step by step.")
-
-    word_limit = None
-    word_match = re.search(r"(?:under|within|at most|maximum of|max|less than)\s+(\d+)\s+words", lowered)
-    if word_match:
-        word_limit = int(word_match.group(1))
-        constraints.append(f"Keep it under {word_limit} words.")
-
-    format_requirements = ""
-    format_count = None
-    points_match = re.search(rf"{_NUMBER_RE}\s+numbered points", lowered) or re.search(
-        rf"{_NUMBER_RE}\s+points", lowered
-    )
-    if points_match:
-        format_count = _to_int(points_match.group(1))
-        format_requirements = f"{format_count} numbered points"
-    elif "table" in lowered:
-        format_requirements = "Markdown table"
-    elif "bullet" in lowered:
-        format_requirements = "Bullet list"
-    if "two-sentence summary" in lowered or "2-sentence summary" in lowered:
-        constraints.append("Finish with a two-sentence summary.")
-
-    gaps: list[str] = []
-    if not audience:
-        gaps.append("audience not specified")
-    if not format_requirements:
-        gaps.append("output format not specified")
-    if not word_limit:
-        gaps.append("word limit not specified")
-
-    sections = [f"Act as {role}.", "", f"Objective: {objective_text}"]
-    if constraints:
-        sections.append("")
-        sections.append("Constraints:")
-        sections.extend(f"- {c}" for c in constraints)
-    if format_requirements:
-        sections.append("")
-        sections.append(f"Output format: {format_requirements}.")
-    template_text = "\n".join(sections)
-
     return StructuredPrompt(
         raw=cleaned,
-        intent=classify_intent(cleaned),
-        role=role,
-        objective=objective_text,
-        constraints=constraints,
-        format_requirements=format_requirements,
-        format_count=format_count,
-        audience=audience,
-        word_limit=word_limit,
+        intent=llm.get("intent") or "general",
+        role=llm["role"],
+        objective=llm["objective"],
+        context=llm["context"],
+        constraints=llm["constraints"],
+        format_requirements=llm["format_requirements"],
+        format_count=llm["format_count"],
+        audience=llm["audience"],
+        word_limit=llm["word_limit"],
         variables=extract_variables(cleaned),
-        gaps=gaps,
+        gaps=llm["gaps"],
         template_text=template_text,
-    )
+    ), f"llm:{DEFAULT_STRUCTURING_MODEL}"
 
 
 def format_check(output_text: str, structured: StructuredPrompt) -> dict:
@@ -155,7 +177,7 @@ def format_check(output_text: str, structured: StructuredPrompt) -> dict:
     text = output_text or ""
     numbered = len(re.findall(r"(?m)^\s*\d+[.\)]\s", text))
     word_count = len(text.split())
-    return {
+    result = {
         "numbered_points_found": numbered,
         "numbered_points_expected": structured.format_count,
         "numbered_points_match": (
@@ -166,6 +188,21 @@ def format_check(output_text: str, structured: StructuredPrompt) -> dict:
             word_count <= structured.word_limit if structured.word_limit else None
         ),
     }
+    # The formats structure() can now assign are also checked here,
+    # mechanically, instead of being assigned and then ignored.
+    fmt = structured.format_requirements or ""
+    sentence_match = re.match(r"(\d+) sentences?$", fmt)
+    if sentence_match:
+        expected = int(sentence_match.group(1))
+        found = len([s for s in re.split(r"[.!?]+\s*", text.strip()) if s.strip()])
+        result["sentences_found"] = found
+        result["sentences_expected"] = expected
+        result["sentences_match"] = found == expected
+    if fmt == "Bullet list":
+        bullets = len(re.findall(r"(?m)^\s*[-*•]\s", text))
+        result["bullets_found"] = bullets
+        result["bullets_match"] = bullets > 0
+    return result
 
 
 async def run_engine(
@@ -177,15 +214,17 @@ async def run_engine(
     top_p: float = 1.0,
     seed: int | None = None,
 ) -> dict:
-    """Structure a raw request, run it, and score every response.
+    """Structure a raw request with AI, run it, and score every response.
 
     Stateless: this does not write to the database. Use the /prompts
     and /runs endpoints when a version, run history, or audit trail
     is wanted. The mock provider needs no key; real providers need
     their key set server-side, and a missing key is recorded as a
-    per-model error, not a crash.
+    per-model error, not a crash. Structuring itself is AI-only:
+    if the structuring model cannot judge the request, this raises
+    instead of running on a hardcoded template.
     """
-    structured = structure(raw)
+    structured, source = await structure_with_ai_strict(raw)
     prompt_text = render_template(structured.template_text, variables or {})
     if test_input:
         prompt_text = f"{prompt_text}\n\nInput:\n{test_input}"
@@ -213,9 +252,11 @@ async def run_engine(
         })
     return {
         "structured": {
+            "source": source,
             "intent": structured.intent,
             "role": structured.role,
             "objective": structured.objective,
+            "context": structured.context,
             "constraints": structured.constraints,
             "format_requirements": structured.format_requirements,
             "format_count": structured.format_count,

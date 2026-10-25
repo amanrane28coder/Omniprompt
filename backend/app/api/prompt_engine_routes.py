@@ -8,13 +8,17 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..services.prompt_engine import run_engine, structure
+from ..services.prompt_engine import run_engine, structure_with_ai_strict
 
 router = APIRouter(prefix="/prompt-engine", tags=["prompt-engine"])
 
 
 class StructureRequest(BaseModel):
     raw: str
+    # No use_llm flag anymore: structuring is AI-only
+    # (gpt-oss-20b, live). If the model cannot judge the request,
+    # the endpoint returns 502 with the model error — there is
+    # no hardcoded structurer to fall back to.
 
 
 class RunRequest(BaseModel):
@@ -28,13 +32,17 @@ class RunRequest(BaseModel):
 
 
 @router.post("/structure")
-def structure_endpoint(payload: StructureRequest):
+async def structure_endpoint(payload: StructureRequest):
     try:
-        s = structure(payload.raw)
+        s, source = await structure_with_ai_strict(payload.raw)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
     return {
+        "source": source,
         "intent": s.intent, "role": s.role, "objective": s.objective,
+        "context": s.context,
         "constraints": s.constraints, "format_requirements": s.format_requirements,
         "format_count": s.format_count, "audience": s.audience,
         "word_limit": s.word_limit, "variables": s.variables, "gaps": s.gaps,
@@ -51,3 +59,5 @@ async def run_endpoint(payload: RunRequest):
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))

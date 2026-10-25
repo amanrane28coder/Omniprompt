@@ -93,17 +93,17 @@ def test_nvidia_models_registered_and_free():
 
 def test_engine_run_with_nvidia_model_and_no_key_records_error_not_crash(monkeypatch):
     monkeypatch.setattr(nvidia_adapter, "NVIDIA_API_KEY", "")
-    # The orchestration module holds adapter instances created at import;
-    # its NvidiaAdapter instances read the key at call time from the
-    # adapter module, so patching there is enough for the missing-key path
-    # only if the adapter reads the module global at call time. It does:
-    # NVIDIA_API_KEY is looked up in nvidia_adapter's namespace.
-    out = asyncio.run(run_engine(
-        "Explain cloud computing.", models=["openai/gpt-oss-20b"],
-        test_input="cloud computing",
-    ))
-    resp = out["responses"][0]
-    assert resp["model"] == "openai/gpt-oss-20b"
-    assert resp["error"] is not None
-    assert "NVIDIA_API_KEY" in resp["error"]
-    assert resp["scores"] is None
+    # AI-only structuring: with no key, the run cannot even structure,
+    # so it raises a clear AI-unavailable error instead of running
+    # on a hardcoded template. The per-model error behaviour for a
+    # successfully structured run is covered elsewhere.
+    try:
+        asyncio.run(run_engine(
+            "Explain cloud computing.", models=["openai/gpt-oss-20b"],
+            test_input="cloud computing",
+        ))
+    except RuntimeError as exc:
+        assert "NVIDIA_API_KEY" in str(exc)
+        assert "AI structuring unavailable" in str(exc)
+    else:
+        raise AssertionError("run without a key must fail at AI structuring, not run on rules")

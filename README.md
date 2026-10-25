@@ -119,9 +119,14 @@ the default for demos and tests.
 
 `backend/app/services/prompt_engine.py` — raw request → structured
 template → parallel provider run → weighted score + latency + cost +
-format check, in one call. Structuring is rule-based and deterministic:
-it works offline at $0 and never needs a provider key. Real providers
-enter only at the run step, with keys supplied server-side (BYOK).
+format check, in one call. Structuring is AI-only: a live model
+(`openai/gpt-oss-20b` on NVIDIA, see below) judges the request and
+assigns role, context, constraints, output format, and intent.
+There is no hardcoded rule-based structurer: if the model cannot
+judge a request, structuring returns a 502 error instead of a
+keyword-based result, and structuring needs `NVIDIA_API_KEY`
+server-side. Real providers enter at the run step too, with keys
+supplied server-side (BYOK).
 
 ```bash
 # Structure only
@@ -135,13 +140,16 @@ curl -X POST http://127.0.0.1:8000/prompt-engine/run \
   -d '{"raw": "Explain cloud computing to a beginner in five numbered points.", "models": ["mock"], "test_input": "cloud computing"}'
 ```
 
-What it extracts: role (explicit "Act as X" wins, otherwise inferred),
-audience, word limit, numbered-point count, practical-example /
-evidence / step-by-step constraints. What it does not invent: if the
-raw request gives no audience or format, those are reported in
-`gaps` instead of being hallucinated. The format check counts
-numbered points and words mechanically — a mock response that is not
-numbered honestly fails the format check instead of faking a pass.
+What the model assigns: role, context, constraints, output format,
+audience, word limit, and intent — judged from the request, not
+from a keyword list. What it does not invent: if the raw request
+gives no audience or format, those are reported in `gaps` instead
+of being hallucinated. The template is rendered in sentence form
+("Act as biology instructor. Give an example of mammals. In the
+context of Biology."). The format check counts numbered points,
+sentences, bullets, and words mechanically — a mock response that
+is not numbered honestly fails the format check instead of faking
+a pass.
 
 ## NVIDIA provider (extension beyond the synopsis)
 
@@ -153,13 +161,17 @@ registration in `orchestration.py`.
 - API: OpenAI-compatible, `https://integrate.api.nvidia.com/v1/chat/completions`
 - Key: `NVIDIA_API_KEY` in `.env`, server-side only, key prefix `nvapi-`
 - Registered models: `openai/gpt-oss-20b` (verified live Oct 25,
-  2026: real engine run, 83/125 tokens, 5335ms, $0.00),
+  2026: real engine run, 83/125 tokens, 5335ms, $0.00; structuring
+  model, OK in 16.3s),
   `deepseek-ai/deepseek-v4.1-flash`, `moonshotai/kimi-k3`,
-  `z-ai/glm-5.3`. Removed after returning 410 Gone (EOL Aug 26,
-  2026): `meta/llama-3.3-70b-instruct`,
-  `nvidia/llama-3.3-nemotron-super-49b-v1.5`. Note: DeepSeek
-  Flash and GLM 5.3 timed out at 120s on Oct 25, 2026, while
-  gpt-oss-20b answered — model availability on the free tier varies.
+  `z-ai/glm-5.3`, `z-ai/glm-5.3-flash`. Removed after returning
+  410 Gone (EOL Aug 26, 2026): `meta/llama-3.3-70b-instruct`,
+  `nvidia/llama-3.3-nemotron-super-49b-v1.5`. Live structuring
+  test on Oct 25, 2026: `openai/gpt-oss-120b` 410 Gone in 2.2s,
+  `moonshotai/kimi-k3` 410 Gone in 1.0s, GLM 5.3 / DeepSeek V4.1
+  Flash / GLM 5.3 Flash all timed out at 120s, while gpt-oss-20b
+  answered — model availability on the free tier varies, and
+  only gpt-oss-20b is used for structuring.
 - Timeout: 120s for NVIDIA models (other providers stay 30s),
   because the hosted free tier routinely takes longer than 30s to
   answer. A timeout is reported as `TimeoutError`, not as a
@@ -168,8 +180,11 @@ registration in `orchestration.py`.
   rate-limited (~40 requests/minute reported) and for prototyping
   only, not production. Model slugs change when NVIDIA updates
   versions — check build.nvidia.com for the current list.
-- No key yet? The run still completes: a missing key is recorded
-  as a per-model error, not a crash (see the NVIDIA tests).
+- No key yet? A version-based run still completes: a missing key
+  is recorded as a per-model error, not a crash (see the NVIDIA
+  tests). Prompt Engine structure/run are different: they need
+  the structuring key and return a 502 AI-unavailable error
+  without it.
 
 These endpoints are stateless. For versioned prompts, run history,
 and audit events, use `/prompts` and `/runs` instead.
