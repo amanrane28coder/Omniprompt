@@ -24,6 +24,7 @@ class _FakeResponse:
 class _FakeClient:
     def __init__(self, *args, **kwargs):
         self.posted = None
+        self.timeout = kwargs.get("timeout")
 
     async def __aenter__(self):
         return self
@@ -42,7 +43,7 @@ def test_nvidia_adapter_normalizes_openai_compatible_response(monkeypatch):
     monkeypatch.setattr(
         nvidia_adapter.httpx, "AsyncClient", lambda **kwargs: fake
     )
-    adapter = NvidiaAdapter("meta/llama-3.3-70b-instruct")
+    adapter = NvidiaAdapter("openai/gpt-oss-20b")
     result = asyncio.run(adapter.send("Hello", {"temperature": 0.2, "top_p": 1.0}))
     assert result.output_text == "Hello from NVIDIA"
     assert result.input_tokens == 10
@@ -51,13 +52,36 @@ def test_nvidia_adapter_normalizes_openai_compatible_response(monkeypatch):
     url, headers, payload = fake.posted
     assert url == "https://integrate.api.nvidia.com/v1/chat/completions"
     assert headers["Authorization"] == "Bearer nvapi-test"
-    assert payload["model"] == "meta/llama-3.3-70b-instruct"
+    assert payload["model"] == "openai/gpt-oss-20b"
 
 
 def test_nvidia_adapter_requires_key(monkeypatch):
     monkeypatch.setattr(nvidia_adapter, "NVIDIA_API_KEY", "")
     with pytest.raises(RuntimeError, match="NVIDIA_API_KEY"):
-        asyncio.run(NvidiaAdapter("meta/llama-3.3-70b-instruct").send("Hello", {}))
+        asyncio.run(NvidiaAdapter("openai/gpt-oss-20b").send("Hello", {}))
+
+
+def test_nvidia_adapter_uses_120s_timeout(monkeypatch):
+    monkeypatch.setattr(nvidia_adapter, "NVIDIA_API_KEY", "nvapi-test")
+    fake = _FakeClient()
+
+    def _client(**kwargs):
+        fake.timeout = kwargs.get("timeout")
+        return fake
+
+    monkeypatch.setattr(nvidia_adapter.httpx, "AsyncClient", _client)
+    asyncio.run(NvidiaAdapter("openai/gpt-oss-20b").send("Hello", {}))
+    assert fake.timeout == 120
+
+
+def test_timeout_error_is_named_not_empty(monkeypatch):
+    class _TimeoutAdapter:
+        async def send(self, prompt_text, params):
+            raise asyncio.TimeoutError()
+
+    monkeypatch.setitem(orchestration._ADAPTERS, "mock", _TimeoutAdapter())
+    results = asyncio.run(orchestration.orchestrate_run("hi", ["mock"], {}))
+    assert results[0].error == "TimeoutError"
 
 
 def test_nvidia_models_registered_and_free():
@@ -75,11 +99,11 @@ def test_engine_run_with_nvidia_model_and_no_key_records_error_not_crash(monkeyp
     # only if the adapter reads the module global at call time. It does:
     # NVIDIA_API_KEY is looked up in nvidia_adapter's namespace.
     out = asyncio.run(run_engine(
-        "Explain cloud computing.", models=["meta/llama-3.3-70b-instruct"],
+        "Explain cloud computing.", models=["openai/gpt-oss-20b"],
         test_input="cloud computing",
     ))
     resp = out["responses"][0]
-    assert resp["model"] == "meta/llama-3.3-70b-instruct"
+    assert resp["model"] == "openai/gpt-oss-20b"
     assert resp["error"] is not None
     assert "NVIDIA_API_KEY" in resp["error"]
     assert resp["scores"] is None

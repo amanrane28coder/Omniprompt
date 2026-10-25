@@ -20,8 +20,12 @@ from .evaluation import estimated_cost_usd
 # updates versions — check build.nvidia.com for the current list.
 # All are $0 on the free tier (rate-limited, prototyping only).
 NVIDIA_MODELS = [
-    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    "meta/llama-3.3-70b-instruct",
+    # Verified live Oct 25, 2026 on a real key: openai/gpt-oss-20b
+    # answered in under 55s. The two models below were removed after
+    # returning 410 Gone (EOL Aug 26, 2026): meta/llama-3.3-70b-instruct,
+    # nvidia/llama-3.3-nemotron-super-49b-v1.5. deepseek-v4.1-flash
+    # and glm-5.3 are still listed but timed out at 120s on that day.
+    "openai/gpt-oss-20b",
     "deepseek-ai/deepseek-v4.1-flash",
     "moonshotai/kimi-k3",
     "z-ai/glm-5.3",
@@ -59,13 +63,21 @@ async def _call_one(model: str, prompt_text: str, params: dict) -> RunResult:
     adapter = _ADAPTERS.get(model)
     if adapter is None:
         return RunResult(model, CanonicalResponse("", 0, 0, "error"), 0, f"Unknown model: {model}")
+    # NVIDIA's hosted free tier is slow: 120s for its models, 30s for
+    # everyone else. The per-adapter HTTP timeout must match (see
+    # nvidia_adapter.py), otherwise the HTTP client cuts off first.
+    timeout = 120 if model in NVIDIA_MODELS else 30
     start = time.monotonic()
     try:
         async with _SEMAPHORES[model]:
-            response = await asyncio.wait_for(adapter.send(prompt_text, params), timeout=30)
+            response = await asyncio.wait_for(adapter.send(prompt_text, params), timeout=timeout)
         return RunResult(model, response, int((time.monotonic() - start) * 1000))
     except Exception as exc:  # timeout, rate limit, outage -> recorded, not raised
-        return RunResult(model, CanonicalResponse("", 0, 0, "error"), int((time.monotonic() - start) * 1000), str(exc))
+        # str(asyncio.TimeoutError()) is "" — without the fallback a
+        # timeout was recorded as an empty error, which run_engine
+        # treated as success and scored 0.
+        error = str(exc) or type(exc).__name__
+        return RunResult(model, CanonicalResponse("", 0, 0, "error"), int((time.monotonic() - start) * 1000), error)
 
 
 async def orchestrate_run(prompt_text: str, models: list[str], params: dict) -> list[RunResult]:

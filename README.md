@@ -152,9 +152,18 @@ registration in `orchestration.py`.
 
 - API: OpenAI-compatible, `https://integrate.api.nvidia.com/v1/chat/completions`
 - Key: `NVIDIA_API_KEY` in `.env`, server-side only, key prefix `nvapi-`
-- Registered models: `nvidia/llama-3.3-nemotron-super-49b-v1.5`,
-  `meta/llama-3.3-70b-instruct`, `deepseek-ai/deepseek-v4.1-flash`,
-  `moonshotai/kimi-k3`, `z-ai/glm-5.3`
+- Registered models: `openai/gpt-oss-20b` (verified live Oct 25,
+  2026: real engine run, 83/125 tokens, 5335ms, $0.00),
+  `deepseek-ai/deepseek-v4.1-flash`, `moonshotai/kimi-k3`,
+  `z-ai/glm-5.3`. Removed after returning 410 Gone (EOL Aug 26,
+  2026): `meta/llama-3.3-70b-instruct`,
+  `nvidia/llama-3.3-nemotron-super-49b-v1.5`. Note: DeepSeek
+  Flash and GLM 5.3 timed out at 120s on Oct 25, 2026, while
+  gpt-oss-20b answered — model availability on the free tier varies.
+- Timeout: 120s for NVIDIA models (other providers stay 30s),
+  because the hosted free tier routinely takes longer than 30s to
+  answer. A timeout is reported as `TimeoutError`, not as a
+  silent empty success.
 - Cost: $0 on the free tier (recorded as $0.00 by the engine), but
   rate-limited (~40 requests/minute reported) and for prototyping
   only, not production. Model slugs change when NVIDIA updates

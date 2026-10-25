@@ -26,7 +26,10 @@ class NvidiaAdapter(BaseAdapter):
     async def send(self, prompt_text: str, params: dict) -> CanonicalResponse:
         if not NVIDIA_API_KEY:
             raise RuntimeError("NVIDIA_API_KEY is not set server-side")
-        async with httpx.AsyncClient(timeout=30) as client:
+        # 120s, not 30s: NVIDIA's hosted free tier routinely takes
+        # longer than 30s to answer, and a 30s cut-off turned live
+        # models into empty "successes" (see orchestration timeout fix).
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{BASE_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
