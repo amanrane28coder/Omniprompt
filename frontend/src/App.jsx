@@ -17,7 +17,12 @@ function variablesOf(template) {
 
 export default function App() {
   const [workspace, setWorkspace] = useState(null);
+  // Library data is kept in background state only — it is fetched
+  // and refreshed on every save, but never rendered as a list.
+  // Nothing is deleted: a future UI can show it again by rendering
+  // `prompts` and `selectPrompt` as before.
   const [prompts, setPrompts] = useState([]);
+  const [savedMessage, setSavedMessage] = useState("");
   const [versions, setVersions] = useState([]);
   const [selected, setSelected] = useState(null);
   const [title, setTitle] = useState("");
@@ -61,12 +66,14 @@ export default function App() {
         method: "POST", body: JSON.stringify({ title: safeTitle, template_text: template }),
       });
       setPrompts(await api(`/workspaces/${workspace.id}/prompts`));
+      setSavedMessage("Saved to library (kept in background).");
     } catch (e) { setError(e.message); }
     setSaving(false);
   }
 
   async function structurePrompt() {
     setError("");
+    setSavedMessage("");
     setEngineBusy("structuring");
     try {
       setStructured(await api("/prompt-engine/structure", {
@@ -79,6 +86,7 @@ export default function App() {
 
   async function runEngine() {
     setError("");
+    setSavedMessage("");
     setEngineBusy("running");
     try {
       const res = await api("/prompt-engine/run", {
@@ -101,6 +109,7 @@ export default function App() {
       });
       setPrompts(await api(`/workspaces/${workspace.id}/prompts`));
       setTemplate(structured.template_text);
+      setSavedMessage("Saved to library (kept in background).");
     } catch (e) { setError(e.message); }
     setSaving(false);
   }
@@ -124,6 +133,7 @@ export default function App() {
       <h1 className="text-3xl font-bold">OmniPrompt</h1>
       <p className="text-gray-600">Structure, version, compare, measure.</p>
       {error && <p className="text-red-600">{error}</p>}
+      {savedMessage && <p className="text-green-700">{savedMessage}</p>}
 
       <section className="space-y-2">
         <h2 className="text-xl font-semibold">Prompt Engine — make a prompt from a raw request</h2>
@@ -183,14 +193,6 @@ export default function App() {
         <button className="bg-black text-white px-4 py-2 disabled:opacity-50" disabled={saving} onClick={createPrompt}>
           {saving ? "Saving…" : "Save as new prompt (v1)"}
         </button>
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="text-xl font-semibold">Library</h2>
-        {prompts.map((p) => (
-          <button key={p.id} className="block underline" onClick={() => selectPrompt(p)}>{p.title || "(untitled)"}</button>
-        ))}
-        {selected && <p>Versions: {versions.map((v) => `v${v.version_no}`).join(", ")} — latest: {currentVersion?.template_text}</p>}
       </section>
 
       {currentVersion && (
