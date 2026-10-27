@@ -228,3 +228,17 @@ worked example 4/5/3 → 82.0), cost calculation (TC9), and the mock A/B run
 - Text prompts only. No fine-tuning, no automatic prompt optimization.
 - Provider prices in `orchestration.py` are placeholder per-1M-token rates;
   replace them with the current provider pricing before quoting real costs.
+
+## Future work (not claimed as done)
+
+- RBAC / user accounts — currently workspace-scoping only.
+- Multi-model A/B sandbox in the UI — the sandbox Run button is mock-only;
+  multi-model runs work via the `/runs` API and the Prompt Engine.
+- AI-judged scoring to replace the deterministic placeholder scorer.
+- Live OpenAI / Gemini / Claude runs — adapters exist, but verified live
+  runs so far are mock, NVIDIA `openai/gpt-oss-20b`, and Groq
+  `groq/gpt-oss-20b` / `groq/gpt-oss-120b` only.
+- PostgreSQL deployment — SQLite is the local default via `DATABASE_URL`.
+- Current UI note: the Library list is hidden (prompts are kept in
+  background state and the A/B sandbox auto-selects the latest saved
+  prompt); branch / rollback / version history are API-only.
